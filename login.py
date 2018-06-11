@@ -1,51 +1,98 @@
 import websocket
 import requests
 import json
-import asyncio
 
+class BattleState:
+    def __init__(self, opponent):
+        self.opponent = opponent
+        self.cnt = 2
+unwanted_chars = '\n\t >'
 class SimpleAI:
-    def __init__(self, username, password):
+    def __init__(self, username, password, team):
         self.username = username
         self.password = password
         self.ws = websocket.WebSocket()
         self.ws.connect('ws://localhost:8000/showdown/websocket')
         self.active_battles = dict()
-    async def recv(self):
+        self.team = team
+    def recv(self):
         w = self.ws.recv()
         print('RECEIVING: ' + w)
         return w
-    async def send(self, msg):
+    def send(self, msg):
         print('SENDING: ' + msg)
         self.ws.send(msg)
 
-    async def run(self):
-        await self.login()
+    def run(self):
+        self.login()
         while(True):
-            msg = await self.recv()
-            tokens = msg.split('|')
+            msg = self.recv()
+            tokens = [x.strip(unwanted_chars) for x in msg.split('|')]
             room = tokens[0]
             cmd = tokens[1]
-            if(room == ''):
+            if room == '':
+                #Global command
                 if cmd == 'updatechallenges':
                     challenge_info = json.loads(tokens[2])
                     battle_info = challenge_info['challengesFrom']
-                    from_user = next(iter(battle_info.keys()))
-                    if(from_user):
-                        await self.send('|/accept ' + from_user)
-                #Global command
+                    if len(battle_info) > 0:
+                        from_user, battle_format = next(iter(battle_info.items()))
+                        if from_user:
+                            if battle_format == 'gen7ou':
+                                self.send('|/utm ' + self.team)
+                                self.send('|/accept ' + from_user)
+                            elif battle_format == 'gen7randombattle':
+                                self.send('|/accept ' + from_user)
+                if cmd == 'b':
+                    B = tokens[2].strip(unwanted_chars)
+                    U1 = tokens[3].strip(unwanted_chars)
+                    U2 = tokens[4].strip(unwanted_chars)
+                    if U1 == username:
+                        self.active_battles[B] = BattleState(U2)
+                    if U2 == username:
+                        self.active_battles[B] = BattleState(U1)
+            elif room in self.active_battles:
+                B = self.active_battles[room]
+                if cmd == 'player':
+                    pass
+                elif cmd == 'request' and tokens[2]:
+                    request_info = json.loads(tokens[2])
+                    if 'forceSwitch' in request_info:
+                        self.send(room + '|/switch ' + str(B.cnt))
+                        B.cnt += 1
+                        continue
+                    if 'wait' in request_info:
+                        continue
+                    if 'teamPreview' in request_info:
+                        self.send(room + '|/team 123456')
+                        continue
+                    #Otherwise we assume its a move
+                    self.send(room + '|/move 1')
+                elif cmd == '':
+                    #sub commands
+                    self.parse_scmd(msg, room)
+
+    def parse_scmd(self, msg, room):
+        cmds = msg.split('\n|')
+        for c in cmds[1:]:
+            tokens = c.split('|')
+            cmd = tokens[0]
+            if cmd == 'move':
                 pass
-            else:
-                #Battle command
+            if cmd == 'win':
+                self.active_battles.pop(room)
+            if cmd == 'poke':
                 pass
-    async def login(self):
-        await self.send('|/autojoin')
-        msg = await self.recv()
+
+    def login(self):
+        self.send('|/autojoin')
+        msg = self.recv()
         while(True):
             tk = msg.split('|')
             if(tk[1] == 'challstr'):
                 login_token = msg[10:]
                 break
-            msg = await self.recv()
+            msg = self.recv()
         print('LOGIN: ' + login_token)
         #Need to remove |challstr| from the beginning"
         r = requests.post('http://localhost.psim.us/action.php', 
@@ -56,69 +103,10 @@ class SimpleAI:
         #For some reason there is a leading ']' that needs to be removed
         login_info = json.loads(r.content[1:])
         assertion = login_info['assertion']
-        await self.send('|/trn ' + self.username + ',0,'+assertion)
-        #Seems to tell us about server history
-        await self.recv()
-
-        #'|updatesearch|{"searching":[],"games":null}'
-        await self.recv()
-
-        #'|updateuser|jimola|1|102'
-        await self.recv()
-
-        #'|j| jimola\n'
-        await self.recv()
+        self.send('|/trn ' + self.username + ',0,'+assertion)
 
     def logout(self):
         self.ws.send('|/logout')
-        self.ws.close()
-        s.ws = None
-
-    async def challenge(self, username, battle_type='random', team=None):
-        if(battle_type == 'random'):
-            await self.send('|/challenge ' + username + ', gen7randombattle')
-        else:
-            await self.send('|/utm\n'+team)
-            await self.send('|/challenge ' + username + ', gen7ou')
-        incoming = ''
-        while True:
-            incoming = await self.recv()
-            cmd_type = incoming.split('|')[1]
-            if(cmd_type == 'b'):
-                break
-        #battle name and players
-        self.battle_name = incoming.split('|')[2]
-        self.cnt = 2
-        await self.battle()
-
-    async def battle(self):
-        battle_on = True
-        while battle_on:
-            msg = await self.recv()
-            split_msg = msg.split('|')
-            if split_msg[1] == 'request' and split_msg[2]:
-                content = json.loads(split_msg[2])
-                if 'forceSwitch' in content:
-                    await self.send(self.battle_name + '|/switch ' +
-                            str(self.cnt))
-                    self.cnt += 1
-                    continue
-                if 'wait' in content:
-                    continue
-
-                await self.send(self.battle_name + '|/move 1')
-            elif split_msg[1] == '\n' and (split_msg[2] == 'move' 
-                    or split_msg[2] == 'switch'):
-                sub_commands = msg.split('\n|')
-                print('SCMD: ')
-                for scmd in sub_commands:
-                    s_cmd = scmd.split('|')
-                    cmd_type = s_cmd[0]
-                    print(cmd_type)
-                    if(cmd_type == 'win'):
-                        battle_on = False
-                        break
-
 try:
     f = open('../secret.txt').read()
     username, password = f.split('\n')[0:2]
@@ -130,8 +118,6 @@ with open('teams.txt') as T:
     for line in T:
         teams.append(line[:-1])
 
-loop = asyncio.get_event_loop()
-s = SimpleAI()
+#s = SimpleAI()
 #asyncio.ensure_future(s.login(username, password))
 #asyncio.ensure_future(s.challenge('GucciMoney', 'ou', teams[0]))
-loop.run_forever()
