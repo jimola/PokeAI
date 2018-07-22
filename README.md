@@ -1,10 +1,14 @@
 
 ## A Pokemon AI
 
-### Instructions for use
+### Prerequisites
 
 Clone the repository. The Pokemon-Showdown repository will be empty.  
 Fill it by typing 'git submodule init' and 'git submodule update'.  
+
+You will need websockets. Run 'pip install websocket-client'.
+
+### Running
 
 Pokemon-Showdown is my fork of the regular Pokemon Showdown repo.  
 Start a server by running pokemon-showdown within that folder.
