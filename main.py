@@ -2,25 +2,37 @@ import websocket
 import requests
 import json
 
-class BattleState:
+class BattleAI:
     def __init__(self, opponent):
         self.opponent = opponent
-        self.cnt = 2
+        self.cnt = 1
+        self.requests = None
+    def team_preview(self):
+        return '123456'
+    def switch(self):
+        self.cnt += 1
+        return str(self.cnt)
+    def move(self):
+        return '1'
+    def update(self, msg):
+        print('Battle Update')
+        print(msg)
+
 unwanted_chars = '\n\t >'
-class SimpleAI:
-    def __init__(self, username, password, team):
+class AutoBattler:
+    def __init__(self, username, password, team, address):
         self.username = username
         self.password = password
         self.ws = websocket.WebSocket()
-        self.ws.connect('ws://localhost:8000/showdown/websocket')
-        self.active_battles = dict()
+        self.ws.connect(address)
+        self.battle_ais = dict()
         self.team = team
     def recv(self):
         w = self.ws.recv()
-        print('RECEIVING: ' + w)
+        #print('RECEIVING: ' + w)
         return w
     def send(self, msg):
-        print('SENDING: ' + msg)
+        #print('SENDING: ' + msg)
         self.ws.send(msg)
 
     def run(self):
@@ -48,29 +60,29 @@ class SimpleAI:
                     U1 = tokens[3].strip(unwanted_chars)
                     U2 = tokens[4].strip(unwanted_chars)
                     if U1 == username:
-                        self.active_battles[B] = BattleState(U2)
+                        self.battle_ais[B] = BattleAI(U2)
                     if U2 == username:
-                        self.active_battles[B] = BattleState(U1)
-            elif room in self.active_battles:
-                B = self.active_battles[room]
-                if cmd == 'player':
-                    pass
-                elif cmd == 'request' and tokens[2]:
+                        self.battle_ais[B] = BattleAI(U1)
+            elif room in self.battle_ais:
+                B = self.battle_ais[room]
+                if cmd == 'request' and tokens[2]:
                     request_info = json.loads(tokens[2])
-                    if 'forceSwitch' in request_info:
-                        self.send(room + '|/switch ' + str(B.cnt))
-                        B.cnt += 1
-                        continue
-                    if 'wait' in request_info:
-                        continue
-                    if 'teamPreview' in request_info:
-                        self.send(room + '|/team 123456')
-                        continue
-                    #Otherwise we assume its a move
-                    self.send(room + '|/move 1')
-                elif cmd == '':
-                    #sub commands
-                    self.parse_scmd(msg, room)
+                    B.requests = request_info
+                elif cmd == '' or cmd == 'player':
+                    if B.requests:
+                        #Checks if this command came after a request
+                        B.update(msg)
+                        if 'forceSwitch' in request_info:
+                            self.send(room + '|/switch ' + B.switch())
+                        elif 'wait' in request_info:
+                            pass
+                        elif 'teamPreview' in request_info:
+                            self.send(room + '|/team ' + B.team_preview())
+                        else:
+                            #Otherwise it's a move request
+                            self.send(room + '|/move ' + B.move())
+                    else:
+                        self.parse_scmd(msg, room)
 
     def parse_scmd(self, msg, room):
         cmds = msg.split('\n|')
@@ -79,8 +91,10 @@ class SimpleAI:
             cmd = tokens[0]
             if cmd == 'move':
                 pass
-            if cmd == 'win':
-                self.active_battles.pop(room)
+            if cmd == 'win' or cmd == 'tie':
+                self.battle_ais.pop(room)
+                self.requests.pop(room)
+                self.send('|/leave ' + room)
             if cmd == 'poke':
                 pass
 
@@ -111,13 +125,15 @@ try:
     f = open('../secret.txt').read()
     username, password = f.split('\n')[0:2]
 except FileNotFoundError:
-    print('File containing username and password not found')
+    username = input("Enter Showdown Username: ")
+    password = input("Enter Showdown Password: ")
 
 teams = []
 with open('teams.txt') as T:
     for line in T:
         teams.append(line[:-1])
-
-#s = SimpleAI()
+address = 'ws://localhost:8000/showdown/websocket' #if you start on port 8000
+s = AutoBattler(username, password, teams[0], address)
+s.run()
 #asyncio.ensure_future(s.login(username, password))
 #asyncio.ensure_future(s.challenge('GucciMoney', 'ou', teams[0]))
